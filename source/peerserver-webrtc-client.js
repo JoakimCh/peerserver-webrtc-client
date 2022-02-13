@@ -1,5 +1,9 @@
 /*
 My alternative to peerjs. A more lightweight/low-level solution. Which is compatible with their signalling server.
+
+Todo:
+  Check if we need to adjust anything according to this:
+  https://w3c.github.io/webrtc-pc/#perfect-negotiation-example
 */
 
 function randomToken() { // what peerjs use
@@ -223,7 +227,7 @@ export class PeerServerClient extends EventTarget {
         console.info('Signalling completed!', peerId)
       }, {once: true})
       await connection.setRemoteDescription(payload.sdp)
-      await connection.setLocalDescription(await connection.createAnswer())
+      await connection.setLocalDescription() // auto creates answer
 
       this.#ws.send(JSON.stringify({
         type: 'ANSWER',
@@ -319,12 +323,11 @@ export class PeerServerClient extends EventTarget {
       }
       console.info('Signalling started...', peerId)
       const connectionId = randomToken()
-      
 
       signallingAbort.signal.addEventListener('abort', () => {
         console.info('Signalling completed!', peerId)
       }, {once: true})
-      await connection.setLocalDescription(await connection.createOffer())
+      await connection.setLocalDescription() // auto creates offer
 
       this.#ws.send(JSON.stringify({
         type: 'OFFER',

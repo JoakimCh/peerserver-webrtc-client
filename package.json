@@ -1,0 +1,21 @@
+{
+  "name": "peerserver-webrtc-client",
+  "version": "0.1.0",
+  "author": "Joakim L. Christiansen (https://joakimch.github.io)",
+  "license": "MIT",
+  "type": "module",
+  "main": "source/peerserver-webrtc-client.js",
+  "files": [
+    "source/*"
+  ],
+  "repository": "github:JoakimCh/peerserver-webrtc-client",
+  "funding": "https://joakimch.github.io/funding.html",
+  "description": "A client for the PeerServer signalling server to establish WebRTC connections. Intended as a lightweight alternative to PeerJS.",
+  "keywords": [
+    "peerserver",
+    "webrtc",
+    "client",
+    "peerjs",
+    "peer"
+  ]
+}

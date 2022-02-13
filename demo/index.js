@@ -86,30 +86,42 @@ signallingServer.addEventListener('connection', event => {
   const {connection, peerId, payload} = event.detail
   console.log('Incoming connection:', {peerId, payload})
   d.chatLog.value += 'Incoming connection: '+peerId+'\n'
-  connection.addEventListener('datachannel', event => {
-    const dataChannel = event.channel
-    dataChannel.addEventListener('open', event => {
-      d.chatLog.value += peerId+' opened a data channel.\n'
-      connectedPeers.set(peerId, dataChannel)
-      dataChannel.binaryType = 'arraybuffer'
-    })
-    dataChannel.addEventListener('error', event => {
-      console.warn('peer error:', peerId, event)
-      d.chatLog.value += peerId+' had an error.\n'
-    })
-    dataChannel.addEventListener('close', event => {
-      d.chatLog.value += peerId+' data channel closed.\n'
-      connectedPeers.delete(peerId)
-    })
-    dataChannel.addEventListener('message', event => {
-      if (typeof event.data == 'string') {
-        d.chatLog.value += peerId+': '+event.data+'.\n'
-      }
-    })
-  })
-
+  monitorConnection(peerId, connection)
 })
 
+function onDataChannel(peerId, dataChannel) {
+  dataChannel.addEventListener('open', event => {
+    d.chatLog.value += peerId+': data channel established.\n'
+    connectedPeers.set(peerId, dataChannel)
+    dataChannel.binaryType = 'arraybuffer'
+  })
+  dataChannel.addEventListener('error', event => {
+    console.warn('peer error:', peerId, event.error)
+    if (event.error.errorDetail == 'sctp-failure' 
+    && event.error.sctpCauseCode == null) {
+       return // non-graceful termination is not really an error
+    }
+    d.chatLog.value += peerId+' had an error.\n'
+  })
+  dataChannel.addEventListener('close', event => {
+    if (!connectedPeers.has(peerId)) return
+    d.chatLog.value += peerId+' data channel terminated.\n'
+    connectedPeers.delete(peerId)
+  })
+  dataChannel.addEventListener('message', event => {
+    if (typeof event.data == 'string') {
+      d.chatLog.value += peerId+': '+event.data+'.\n'
+    }
+  })
+}
+
+function monitorConnection(peerId, connection) {
+  connection.addEventListener('datachannel', event => {
+    const dataChannel = event.channel
+    onDataChannel(peerId, dataChannel)
+  })
+
+}
 
 
 
@@ -163,26 +175,9 @@ function onClickOrEnter(func, inputElement, buttonElement) {
       console.info('broker success', event.detail)
     })
     connection.addEventListener('negotiationneeded', broker)
+    monitorConnection(peerId, connection)
     const dataChannel = connection.createDataChannel('data')
-    dataChannel.addEventListener('open', event => {
-      d.chatLog.value += 'Successfully connected to: '+peerId+'.\n'
-      connectedPeers.set(peerId, dataChannel)
-      dataChannel.binaryType = 'arraybuffer'
-    })
-    dataChannel.addEventListener('error', event => {
-      console.warn('peer error:', peerId, event)
-      d.chatLog.value += peerId+' had an error.\n'
-    })
-    dataChannel.addEventListener('close', event => {
-      if (!connectedPeers.has(peerId)) return
-      d.chatLog.value += peerId+' data channel closed.\n'
-      connectedPeers.delete(peerId)
-    })
-    dataChannel.addEventListener('message', event => {
-      if (typeof event.data == 'string') {
-        d.chatLog.value += peerId+': '+event.data+'.\n'
-      }
-    })
+    onDataChannel(peerId, dataChannel)
   }
   onClickOrEnter(f_connect, d.peerId, d.connect)
 }

@@ -7,6 +7,7 @@ function randomToken() { // what peerjs use
 }
 
 const HEARTBEAT_INTERVAL = 5000 // every 5 seconds
+const PEER_CONNECTION_TIMEOUT = 6000
 export const DEFAULT_CONFIG = {
   iceServers: [
     {urls: [
@@ -215,13 +216,13 @@ export class PeerServerClient extends EventTarget {
       }
       timeoutTimer = setTimeout(() => {
         dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
-      }, 3000)
+      }, PEER_CONNECTION_TIMEOUT)
 
       console.info('Signalling started...', peerId)
       eventListenersAbortController.signal.addEventListener('abort', () => {
         console.info('Signalling completed!', peerId)
       }, {once: true})
-      connection.setRemoteDescription(payload.sdp)
+      await connection.setRemoteDescription(payload.sdp)
       await connection.setLocalDescription(await connection.createAnswer())
 
       this.#ws.send(JSON.stringify({
@@ -252,6 +253,7 @@ export class PeerServerClient extends EventTarget {
       }, {signal: eventListenersAbortController.signal})
 
       connection.addEventListener('connectionstatechange', () => {
+        console.log('incoming connectionstatechange', connection.connectionState)
         switch(connection.connectionState) {
           case 'connected':
             clearTimeout(timeoutTimer)
@@ -308,7 +310,7 @@ export class PeerServerClient extends EventTarget {
       }
       timeoutTimer = setTimeout(() => {
         dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
-      }, 3000)
+      }, PEER_CONNECTION_TIMEOUT)
 
       try {
         await this.#ensureConnection()

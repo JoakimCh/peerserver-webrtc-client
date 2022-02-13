@@ -47,7 +47,7 @@ export class PeerServerClient extends EventTarget {
   } = {}) {
     super()
     this.#configuration = configuration
-    this.#peerId = peerId
+    this.#peerId = peerId ?? crypto.randomUUID()
     const getParameters = new URLSearchParams({
       key: 'peerjs', // "API key for the cloud PeerServer. This is not used for servers other than 0.peerjs.com"
       id: this.#peerId,

@@ -10,7 +10,7 @@ function TitleCase(string) {
 
 //#region DOM
 d.h1 = document.createElement('h1')
-d.h1.append('WebRTC Test')
+d.h1.append('peerserver-webrtc-client demo')
 d.h1.style.margin = '0px'
 
 d.container = document.createElement('div')
@@ -52,9 +52,13 @@ d.myId.setAttribute('readonly', true)
 d.copy.addEventListener('click', () => {
   navigator.clipboard.writeText(d.myId.value)
 })
+d.peerId.value = localStorage.getItem('remotePeerId')
 d.peerId.focus()
 
-const signallingServer = new PeerServerClient()
+const signallingServer = new PeerServerClient({
+  peerId: localStorage.getItem('myPeerId')
+})
+localStorage.setItem('myPeerId', signallingServer.peerId)
 log('My ID:', signallingServer.peerId)
 d.myId.value = signallingServer.peerId
 // signallingServer.defaultMetadataForIncoming = 'yo mama'
@@ -72,8 +76,11 @@ signallingServer.addEventListener('error', event => {
 signallingServer.addEventListener('incoming', event => {
   log('Incoming connection request', event.detail)
   const {peerId, payload, accept} = event.detail
-  accept(true, 'I love you')
+  accept(true)
   // accept(false, 'because')
+})
+signallingServer.addEventListener('failed connection', event => {
+  console.log('Incoming connection failed:', event.detail)
 })
 signallingServer.addEventListener('connection', event => {
   const {connection, peerId, payload} = event.detail
@@ -144,11 +151,13 @@ function onClickOrEnter(func, inputElement, buttonElement) {
   const f_connect = () => {
     const peerId = getValue(d.peerId)
     if (!peerId) return
+    localStorage.setItem('remotePeerId', peerId)
     d.chatLog.value += 'Connecting to: '+peerId+'...\n'
     const connection = new RTCPeerConnection(DEFAULT_CONFIG)
     const broker = signallingServer.broker(peerId)
     broker.addEventListener('error', event => {
       console.error('broker error', JSON.stringify(event.detail, null, 2))
+      d.chatLog.value += 'Timed out connecting to: '+peerId+'.\n'
     })
     broker.addEventListener('success', event => {
       console.info('broker success', event.detail)
@@ -165,6 +174,7 @@ function onClickOrEnter(func, inputElement, buttonElement) {
       d.chatLog.value += peerId+' had an error.\n'
     })
     dataChannel.addEventListener('close', event => {
+      if (!connectedPeers.has(peerId)) return
       d.chatLog.value += peerId+' data channel closed.\n'
       connectedPeers.delete(peerId)
     })

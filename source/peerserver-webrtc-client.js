@@ -5,7 +5,7 @@ Todo:
   Check if we need to adjust anything according to this:
   https://w3c.github.io/webrtc-pc/#perfect-negotiation-example
 */
-
+const log = console.log
 function randomToken() { // what peerjs use
   return Math.random().toString(36).slice(2)
 }
@@ -207,6 +207,7 @@ export class PeerServerClient extends EventTarget {
       }
       const connection = new RTCPeerConnection(this.#configuration)
       const eventListenersAbortController = new AbortController() // abort cleans up all event listeners
+      this.#connection_attachDebuggers(connection)
       let timeoutTimer
       const dispatchError = (message, code) => {
         const error = message instanceof Error ? message : Error(message)
@@ -257,16 +258,14 @@ export class PeerServerClient extends EventTarget {
       }, {signal: eventListenersAbortController.signal})
 
       connection.addEventListener('connectionstatechange', () => {
-        console.log('incoming connectionstatechange', connection.connectionState)
-        switch(connection.connectionState) {
-          case 'connected':
-            clearTimeout(timeoutTimer)
-            eventListenersAbortController.abort()
-            this.dispatchEvent(new CustomEvent('connection', {detail: {
-              peerId: peerId,
-              payload, // includes any metadata
-              connection
-            }}))
+        if (connection.connectionState == 'connected') {
+          clearTimeout(timeoutTimer)
+          eventListenersAbortController.abort()
+          this.dispatchEvent(new CustomEvent('connection', {detail: {
+            peerId: peerId,
+            payload, // includes any metadata
+            connection
+          }}))
         }
       }, {signal: eventListenersAbortController.signal})
     }
@@ -289,6 +288,21 @@ export class PeerServerClient extends EventTarget {
     // todo: if useful then look into sending leave messages to connected peers?
   }
 
+  #connection_attachDebuggers(connection) {
+    connection.addEventListener('connectionstatechange', () => {
+      log('connectionState', connection.connectionState)
+    })
+    connection.onicecandidateerror = event => {
+      log('iceCandidateError', event.errorCode, event)
+    }
+    connection.oniceconnectionstatechange = () => {
+      log('iceConnectionState', connection.iceConnectionState)
+    }
+    connection.onicegatheringstatechange = () => {
+      log('iceGatheringState', connection.iceGatheringState)
+    }
+  }
+
   /**
    * Returns a connection broker compatible with the `negotiationneeded` event on a `RTCPeerConnection`. The broker will emit `success` or `error` events according to how the connection attempt went, check the event `detail` property for relevant information.
    * @param {*} peerId 
@@ -297,9 +311,11 @@ export class PeerServerClient extends EventTarget {
   broker(peerId, metadata) {
     const eventTarget = new EventTarget()
     let remoteMetadata
+
     const eventListener = async event => {
       const connection = event.target
       const signallingAbort = new AbortController()
+      this.#connection_attachDebuggers(connection)
       let timeoutTimer
       const dispatchError = (message, code) => {
         const error = message instanceof Error ? message : Error(message)
@@ -369,14 +385,13 @@ export class PeerServerClient extends EventTarget {
       }, {signal: signallingAbort.signal})
 
       connection.addEventListener('connectionstatechange', () => {
-        switch(connection.connectionState) {
-          case 'connected':
-            clearTimeout(timeoutTimer)
-            signallingAbort.abort()
-            eventTarget.dispatchEvent(new CustomEvent('success', {detail: {
-              peerId,
-              peerMetadata: remoteMetadata
-            }}))
+        if (connection.connectionState == 'connected') {
+          clearTimeout(timeoutTimer)
+          signallingAbort.abort()
+          eventTarget.dispatchEvent(new CustomEvent('success', {detail: {
+            peerId,
+            peerMetadata: remoteMetadata
+          }}))
         }
       }, {signal: signallingAbort.signal})
     }

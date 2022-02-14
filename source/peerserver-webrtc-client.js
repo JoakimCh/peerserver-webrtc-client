@@ -253,8 +253,9 @@ export class PeerServerClient extends EventTarget {
       }, {signal: eventListenersAbortController.signal})
 
       this.addEventListener('candidate'+connectionId, event => {
-        const {candidate} = event.detail
-        connection.addIceCandidate(candidate)
+        const {fromPeerId, payload} = event.detail
+        if (fromPeerId != peerId) return
+        connection.addIceCandidate(payload.candidate)
       }, {signal: eventListenersAbortController.signal})
 
       connection.addEventListener('connectionstatechange', () => {
@@ -298,6 +299,7 @@ export class PeerServerClient extends EventTarget {
     }
     connection.oniceconnectionstatechange = () => {
       log('iceConnectionState', connection.iceConnectionState)
+      // iceConnectionState connected == success
     }
     connection.onicegatheringstatechange = () => {
       log('iceGatheringState', connection.iceGatheringState)

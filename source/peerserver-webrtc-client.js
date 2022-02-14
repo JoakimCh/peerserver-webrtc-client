@@ -293,7 +293,8 @@ export class PeerServerClient extends EventTarget {
       log('connectionState', connection.connectionState)
     })
     connection.onicecandidateerror = event => {
-      log('iceCandidateError', event.errorCode, event)
+      const {errorCode, errorText, address, port} = event
+      log('iceCandidateError', {errorCode, errorText, address, port})
     }
     connection.oniceconnectionstatechange = () => {
       log('iceConnectionState', connection.iceConnectionState)

@@ -246,7 +246,7 @@ export class PeerServerClient extends EventTarget {
           type: 'CANDIDATE',
           dst: peerId,
           payload: {
-            candidate: event.candidate || '',
+            candidate: event.candidate,
             connectionId,
           }
         }))
@@ -255,8 +255,19 @@ export class PeerServerClient extends EventTarget {
       this.addEventListener('candidate'+connectionId, event => {
         const {fromPeerId, payload} = event.detail
         if (fromPeerId != peerId) return
-        if (connection.remoteDescription == null) console.warn('addIceCandidate when remoteDescription is null')
-        connection.addIceCandidate(payload.candidate)
+        if (connection.remoteDescription == null) {
+          console.warn('addIceCandidate when remoteDescription is null')
+          const listenerAbort = new AbortController()
+          connection.addEventListener('signalingstatechange', () => {
+            if (connection.remoteDescription) {
+              listenerAbort.abort()
+              console.warn('adding queued ice-candidate')
+              connection.addIceCandidate(payload.candidate)
+            }
+          }, {signal: listenerAbort.signal})
+        } else {
+          connection.addIceCandidate(payload.candidate)
+        }
       }, {signal: eventListenersAbortController.signal})
 
       connection.addEventListener('connectionstatechange', () => {
@@ -291,6 +302,9 @@ export class PeerServerClient extends EventTarget {
   }
 
   #connection_attachDebuggers(connection) {
+    connection.addEventListener('signalingstatechange', () => {
+      log('signalingState', connection.signalingState)
+    })
     connection.addEventListener('connectionstatechange', () => {
       log('connectionState', connection.connectionState)
     })
@@ -366,7 +380,7 @@ export class PeerServerClient extends EventTarget {
           type: 'CANDIDATE',
           dst: peerId,
           payload: {
-            candidate: event.candidate || '',
+            candidate: event.candidate,
             connectionId,
           }
         }))
@@ -375,8 +389,19 @@ export class PeerServerClient extends EventTarget {
       this.addEventListener('candidate'+connectionId, event => {
         const {fromPeerId, payload} = event.detail
         if (fromPeerId != peerId) return
-        if (connection.remoteDescription == null) console.warn('addIceCandidate when remoteDescription is null')
-        connection.addIceCandidate(payload.candidate)
+        if (connection.remoteDescription == null) {
+          console.warn('addIceCandidate when remoteDescription is null')
+          const listenerAbort = new AbortController()
+          connection.addEventListener('signalingstatechange', () => {
+            if (connection.remoteDescription) {
+              listenerAbort.abort()
+              console.warn('adding queued ice-candidate')
+              connection.addIceCandidate(payload.candidate)
+            }
+          }, {signal: listenerAbort.signal})
+        } else {
+          connection.addIceCandidate(payload.candidate)
+        }
       }, {signal: signallingAbort.signal})
 
       this.addEventListener('answer'+connectionId, event => {

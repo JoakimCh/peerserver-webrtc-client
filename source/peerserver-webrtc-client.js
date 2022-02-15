@@ -302,6 +302,10 @@ export class PeerServerClient extends EventTarget {
   }
 
   #connection_attachDebuggers(connection) {
+    log('connectionState', connection.connectionState)
+    log('signalingState', connection.signalingState)
+    log('iceConnectionState', connection.iceConnectionState)
+    log('iceGatheringState', connection.iceGatheringState)
     connection.addEventListener('signalingstatechange', () => {
       log('signalingState', connection.signalingState)
     })
@@ -346,10 +350,13 @@ export class PeerServerClient extends EventTarget {
         if (this.#throwOnConnectionErrors) throw error
         eventTarget.dispatchEvent(new CustomEvent('error', {detail: error}))
       }
+      // timeoutTimer = setTimeout(() => {
+      //   dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
+      // }, PEER_CONNECTION_TIMEOUT)
       timeoutTimer = setTimeout(() => {
-        dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
-      }, PEER_CONNECTION_TIMEOUT)
-
+        console.warn('restartIce')
+        connection.restartIce()
+      }, 1000)
       try {
         await this.#ensureConnection()
       } catch (error) {

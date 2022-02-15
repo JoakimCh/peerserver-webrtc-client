@@ -241,12 +241,12 @@ export class PeerServerClient extends EventTarget {
       }))
 
       connection.addEventListener('icecandidate', event => {
-        if (event.candidate == null) return
+        //if (event.candidate == null) return
         this.#ws.send(JSON.stringify({
           type: 'CANDIDATE',
           dst: peerId,
           payload: {
-            candidate: event.candidate,
+            candidate: event.candidate || '',
             connectionId,
           }
         }))
@@ -255,6 +255,7 @@ export class PeerServerClient extends EventTarget {
       this.addEventListener('candidate'+connectionId, event => {
         const {fromPeerId, payload} = event.detail
         if (fromPeerId != peerId) return
+        if (connection.remoteDescription == null) console.warn('addIceCandidate when remoteDescription is null')
         connection.addIceCandidate(payload.candidate)
       }, {signal: eventListenersAbortController.signal})
 
@@ -360,12 +361,12 @@ export class PeerServerClient extends EventTarget {
       }))
 
       connection.addEventListener('icecandidate', event => {
-        if (event.candidate == null) return
+        //if (event.candidate == null) return
         this.#ws.send(JSON.stringify({
           type: 'CANDIDATE',
           dst: peerId,
           payload: {
-            candidate: event.candidate,
+            candidate: event.candidate || '',
             connectionId,
           }
         }))
@@ -374,6 +375,7 @@ export class PeerServerClient extends EventTarget {
       this.addEventListener('candidate'+connectionId, event => {
         const {fromPeerId, payload} = event.detail
         if (fromPeerId != peerId) return
+        if (connection.remoteDescription == null) console.warn('addIceCandidate when remoteDescription is null')
         connection.addIceCandidate(payload.candidate)
       }, {signal: signallingAbort.signal})
 

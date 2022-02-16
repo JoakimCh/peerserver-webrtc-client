@@ -7,10 +7,32 @@ const d = {} // module's DOM elements
 function TitleCase(string) {
   return string.slice(0,1).toUpperCase()+string.slice(1)
 }
+function dateToMyFormat(date, withTime) {
+  if (!date) date = new Date()
+  const year    = date.getFullYear()
+      , month  = (date.getMonth()+1).toString().padStart(2,'0')
+      , day     = date.getDate().toString().padStart(2,'0')
+      , hours   = date.getHours().toString().padStart(2,'0')
+      , minutes = date.getMinutes().toString().padStart(2,'0')
+      , seconds = date.getSeconds().toString().padStart(2,'0')
+  let string = year+'.'+month+'.'+day
+  if (withTime) string += ' - '+hours+':'+minutes+':'+seconds
+  return string
+}
+async function getRevision() {
+  let response = await fetch('https://joakimch.github.io/peerserver-webrtc-client/demo/', {method: 'head'})
+  let lastModifiedString = response.headers.get('last-modified')
+  const indexDate = new Date(lastModifiedString)
+  response = await fetch('https://joakimch.github.io/peerserver-webrtc-client/source/peerserver-webrtc-client.js', {method: 'head'})
+  lastModifiedString = response.headers.get('last-modified')
+  const libDate = new Date(lastModifiedString)
+  if (libDate > indexDate) return dateToMyFormat(libDate, true)
+  return dateToMyFormat(indexDate, true)
+}
 
 //#region DOM
 d.h1 = document.createElement('h1')
-d.h1.append('peerserver-webrtc-client demo')
+d.h1.append('peerserver-webrtc-client demo, revision: '+await getRevision())
 d.h1.style.margin = '0px'
 
 d.container = document.createElement('div')
@@ -68,24 +90,32 @@ signallingServer.addEventListener('ready', event => {
 })
 signallingServer.addEventListener('close', event => {
   log('Signalling server closed:', event.detail)
+  d.chatLog.value += 'Signalling server closed.\n'
 })
 signallingServer.addEventListener('error', event => {
   // when anything is wrong with the signalling server
   log('Signalling server error:', event.detail)
+  d.chatLog.value += event.detail.message+'\n'
 })
 signallingServer.addEventListener('incoming', event => {
-  log('Incoming connection request', event.detail)
   const {peerId, payload, accept} = event.detail
+  if (payload.attempt <= 1) {
+    log('Incoming connection request', event.detail)
+  }
   accept(true)
   // accept(false, 'because')
 })
 signallingServer.addEventListener('failed connection', event => {
-  console.log('Incoming connection failed:', event.detail)
+  const {error, peerId, payload} = event.detail
+  const msg = 'Incoming connection ('+peerId+') failed after '+payload.attempt+' attempts.'
+  d.chatLog.value += msg+'\n'
+  log(msg, event.detail)
 })
 signallingServer.addEventListener('connection', event => {
   const {connection, peerId, payload} = event.detail
-  console.log('Incoming connection:', {peerId, payload})
-  d.chatLog.value += 'Incoming connection: '+peerId+'\n'
+  const msg = 'Incoming connection ('+peerId+') succeeded after '+payload.attempt+' attempts.'
+  d.chatLog.value += msg+'\n'
+  log(msg, event.detail)
   monitorConnection(peerId, connection)
 })
 
@@ -123,29 +153,6 @@ function monitorConnection(peerId, connection) {
 
 }
 
-
-
-// function onPeerData(data) {
-  // chatLog.value += 'Peer: '+data+'\n'
-// }
-
-
-// const peer = new Peer()
-// let peerConnection
-// peer.on('open', (id) => {
-//   // log(id)
-//   myId.value = id
-// })
-// peer.on('error', (error) => {
-//   chatLog.value += 'Error: '+error+'\n'
-// })
-// peer.on('connection', peerConnection_ => { // you received connection
-//   peerConnection = peerConnection_
-//   chatLog.value += 'Remote connection from: '+peerConnection.peer+'\n'
-//   peerConnection.on('data', onPeerData)
-//   peerConnection.on('error', error => chatLog.value += 'Peer connection error: '+error+'\n')
-// })
-
 function getValue(element, clear, focus) {
   const value = element.value
   if (clear) element.value = ''
@@ -168,8 +175,10 @@ function onClickOrEnter(func, inputElement, buttonElement) {
     const connection = new RTCPeerConnection(DEFAULT_CONFIG)
     const broker = signallingServer.broker(peerId)
     broker.addEventListener('error', event => {
-      console.error('broker error', JSON.stringify(event.detail, null, 2))
-      d.chatLog.value += 'Timed out connecting to: '+peerId+'.\n'
+      const error = event.detail
+      const msg = 'Error: '+error.message+'\n'+JSON.stringify(error, null, 2)
+      console.error('broker error', msg)
+      d.chatLog.value += msg+'.\n'
     })
     broker.addEventListener('success', event => {
       console.info('broker success', event.detail)

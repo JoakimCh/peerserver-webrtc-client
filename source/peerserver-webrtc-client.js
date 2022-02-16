@@ -4,6 +4,9 @@ My alternative to peerjs. A more lightweight/low-level solution. Which is compat
 Todo:
   Check if we need to adjust anything according to this:
   https://w3c.github.io/webrtc-pc/#perfect-negotiation-example
+  * variable max retries (ICE restarts)
+  * notify when offer is from ICE restart
+  * count restarts used before success (and dispatch in event)
 */
 const log = console.log
 function randomToken() { // what peerjs use
@@ -11,7 +14,6 @@ function randomToken() { // what peerjs use
 }
 
 const HEARTBEAT_INTERVAL = 5000 // every 5 seconds
-const PEER_CONNECTION_TIMEOUT = 6000
 export const DEFAULT_CONFIG = {
   iceServers: [
     {urls: [
@@ -31,14 +33,19 @@ export const DEFAULT_CONFIG = {
 export class PeerServerClient extends EventTarget {
   #ws
   #peerId
-  #maxConnectionTries = 3
-  #throwOnConnectionErrors
-  #endpointUrl // stored for reconnection
-  #isConnecting
-  #incomingListener
-  #configuration
+  #connectionAttempts = 0
+  #maxConnectionAttempts = 3 // (to ss) todo: test this and report in error event
+  #maxIceRestarts = 10
+  #peerConnectionTimeout = 1000 // time before ICE restart (outgoing)
+  #incomingPeerConnectionTimeout = 2000
+  // #throwOnConnectionErrors
+  #endpoint
+  #isConnecting // if a connection try to signalling server is ongoing
+  #incomingListener // will need to accept or reject connections
+  #configuration // for RTCPeerConnection
   /** The signalling server can share some metadata with incoming connections before the connection attempt (do not share secrets if you don't trust the signalling server). */
   defaultMetadataForIncoming
+  #connectionMetadataWeakMap = new WeakMap()
 
   /**
    * @param {string} endpoint The PeerServer WebSocket endpoint URL. Defaults to a free to use public endpoint (wss://0.peerjs.com/peerjs). To host your own use: https://github.com/peers/peerjs-server.
@@ -52,13 +59,8 @@ export class PeerServerClient extends EventTarget {
   } = {}) {
     super()
     this.#configuration = configuration
+    this.#endpoint = endpoint
     this.#peerId = peerId ?? crypto.randomUUID()
-    const getParameters = new URLSearchParams({
-      key: 'peerjs', // "API key for the cloud PeerServer. This is not used for servers other than 0.peerjs.com"
-      id: this.#peerId,
-      token: randomToken() // used when connecting to the PeerServer, purpose unknown
-    })
-    this.#endpointUrl = endpoint+'?'+getParameters.toString()
     this.#ensureConnection()
   }
 
@@ -72,45 +74,57 @@ export class PeerServerClient extends EventTarget {
     }
   }
 
-  /* Ensures a ready connection, reconnects if needed. Throws if no connection could be made. */
-  async #ensureConnection() {
-    // todo: improve error details
-    if (this.#isConnecting) {
-      const successfullyConnected = await new Promise((resolve, reject) => {
-        this.addEventListener('ready', () => resolve(true), {once: true})
-        this.addEventListener('error', () => resolve(false), {once: true})
-      })
-      if (successfullyConnected) return true
-      return this.#ensureConnection()
-    }
-    if (this.#ws) {
-      // switch (this.#ws.readyState) {
-      //   case WebSocket.OPEN:
-      //   case WebSocket.CONNECTING:
-      //   return true
-      // }
-      if (this.#ws.readyState == WebSocket.OPEN) {
-        return true
-      }
-      this.#ws = undefined
-    }
+  async #connect() {
+    if (this.#isConnecting) return
     this.#isConnecting = true
-    let ws
-    try {
-      ws = await wsConnectWithRetry(this.#endpointUrl, this.#maxConnectionTries)
-    } catch (error) {
-      throw error
+    this.#ws?.close()
+    this.#ws = undefined // only set at success
+    let ws, wsClosedByUs
+    const failureAbortController = new AbortController()
+    const dispatchError = (message, details = {}) => {
+      const error = message instanceof Error ? message : Error(message)
+      for (const key of Object.keys(details)) {error[key] = details[key]}
+      this.dispatchEvent(new CustomEvent('error', {detail: error}))
+      failureAbortController.abort()
     }
-    
+    try {
+      const getParameters = new URLSearchParams({
+        key: 'peerjs', // "API key for the cloud PeerServer. This is not used for servers other than 0.peerjs.com"
+        id: this.#peerId,
+        token: randomToken() // used when connecting to the PeerServer, purpose unknown
+      })
+      const endpointUrl = this.#endpoint+'?'+getParameters.toString()
+      ws = await wsConnectWithRetry(endpointUrl, this.#maxConnectionAttempts)
+    } catch (error) {
+      return dispatchError('Signalling server WebSocket connection could not be established.', {
+        code: 'SIGNALLING_SERVER_CONNECTION',
+        cause: error
+      })
+    }
+
+    const timeoutTimer = setTimeout(() => {
+      dispatchError('Signalling server open message timed out.', {
+        code: 'SIGNALLING_SERVER_CONNECTION'
+      })
+    }, 2000)
     const heartbeatInterval = setInterval(() => {
       if (ws.readyState != WebSocket.OPEN) return
       ws.send('{"type":"HEARTBEAT"}')
-    }, 5000)
+    }, HEARTBEAT_INTERVAL)
 
-    const abortController = new AbortController()
-    abortController.signal.addEventListener('abort', () => {
+    let successCleanupDone
+    const successCleanup = () => {
+      successCleanupDone = true
+      this.#isConnecting = false
+      clearTimeout(timeoutTimer)
+    }
+    function failureCleanup() {
+      if (!successCleanupDone) successCleanup()
       clearInterval(heartbeatInterval)
-    }, {once: true})
+      wsClosedByUs = true
+      ws?.close()
+    }
+    failureAbortController.signal.addEventListener('abort', failureCleanup, {once: true})
 
     let hadWsError
     ws.addEventListener('error', event => {
@@ -120,49 +134,75 @@ export class PeerServerClient extends EventTarget {
 
     ws.addEventListener('close', event => {
       const {code, reason} = event
-      if (hadWsError) {
-        const error = Error('Signalling server WebSocket error, reason: '+reason)
-        error.code = 'SIGNALLING_SERVER_CONNECTION'
-        error.close = {code, reason}
-        this.dispatchEvent(new CustomEvent('error', {detail: error}))
-      }
       console.warn('Signalling server WebSocket closed.')
-      abortController.abort()
+      this.#ws = undefined
+      if (hadWsError) {
+        dispatchError('Signalling server WebSocket error, reason: '+reason, {
+          code: 'SIGNALLING_SERVER_CONNECTION',
+          close: {code, reason}
+        })
+      } else {
+        failureAbortController.abort()
+      }
       this.dispatchEvent(new CustomEvent('close', {detail: {code, reason}}))
-      if (code != 1000 && !this.#isConnecting) { // if not normal closure
-        this.#ensureConnection() // reconnect then, since it was outside of any connection attempt
+      if (code != 1000 && !this.#isConnecting && !wsClosedByUs) { // if not normal closure
+        console.warn('Reconnecting to signalling server.')
+        //this.#ensureConnection() // reconnect then, since it was outside of any connection attempt
       }
     }, {once: true})
 
-    // setup message handler and wait for server "open message" or timeout
-    const readyPromise = new Promise((resolve, reject) => {
-      const timeoutTimer = setTimeout(reject, 2000, Error('Signalling server open message timed out.'))
-      ws.addEventListener('message', event => {
-        const msg = JSON.parse(event.data)
-        switch (msg.type) {
-          case 'OPEN':
-            clearTimeout(timeoutTimer)
-            resolve(true)
-          break
-          default: this.#messageHandler(msg)
-        }
-      }, {signal: abortController.signal})
-    })
+    ws.addEventListener('message', event => {
+      const msg = JSON.parse(event.data)
+      switch (msg.type) {
+        case 'OPEN':
+          successCleanup()
+          this.#ws = ws
+          this.dispatchEvent(new CustomEvent('ready')) // signalling server connected and ready
+        break
+        case 'ID-TAKEN': {
+          this.#connectionAttempts = this.#maxConnectionAttempts
+          dispatchError('Signalling server: peerId is already connected!', {
+            code: 'SIGNALLING_SERVER_PEERID_TAKEN'
+          })
+        } break
+        default: this.#messageHandler(msg)
+      }
+    }, {signal: failureAbortController.signal})
+  }
 
-    try {
-      await readyPromise
-      this.#ws = ws
-      this.dispatchEvent(new CustomEvent('ready')) // signalling server connected and ready
-    } catch (error) {
-      console.warn(error)
-      ws.close()
-      this.dispatchEvent(new CustomEvent('error', {detail: error})) // error connecting
-      throw error
-    } finally {
-      this.#isConnecting = false // meaning we can retry
+  /* Ensures a ready connection, reconnects if needed. returns true when connected and false when maxConnectionAttempts have been reached. */
+  async #ensureConnection() {
+    const connectionResolver = resolve => {
+      this.addEventListener('ready', () => resolve(true), {once: true})
+      this.addEventListener('error', () => resolve(false), {once: true})
     }
+    const awaitConnection = async () => {
+      this.#connectionAttempts ++
+      const successfullyConnected = await new Promise(connectionResolver)
+      if (successfullyConnected) {
+        this.#connectionAttempts = 0
+        return true
+      }
+      if (this.#connectionAttempts < this.#maxConnectionAttempts) {
+        return this.#ensureConnection() // else try again
+      }
+      return false
+    }
+    if (this.#isConnecting) return await awaitConnection()
+    if (this.#ws?.readyState == WebSocket.OPEN) return true
+    this.#connect() // async
+    return await awaitConnection()
+  }
 
-    return true // if reached; then connection is open
+  async changePeerId(peerId) {
+    this.#peerId = peerId ?? crypto.randomUUID()
+    if (this.#isConnecting) {
+      await new Promise(resolve => {
+        this.addEventListener('ready', () => resolve(true), {once: true})
+        this.addEventListener('error', () => resolve(false), {once: true})
+      })
+    }
+    this.#connect() // connect with the new peerId
   }
 
   async #messageHandler(msg) {
@@ -209,9 +249,9 @@ export class PeerServerClient extends EventTarget {
       const eventListenersAbortController = new AbortController() // abort cleans up all event listeners
       this.#connection_attachDebuggers(connection)
       let timeoutTimer
-      const dispatchError = (message, code) => {
+      const dispatchError = (message, details) => {
         const error = message instanceof Error ? message : Error(message)
-        error.code = code
+        for (const key of Object.keys(details)) {error[key] = details[key]}
         clearTimeout(timeoutTimer)
         eventListenersAbortController.abort()
         connection.close()
@@ -220,8 +260,8 @@ export class PeerServerClient extends EventTarget {
         }}))
       }
       timeoutTimer = setTimeout(() => {
-        dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
-      }, PEER_CONNECTION_TIMEOUT)
+        dispatchError('Connection timed out.', {code: 'PEER_CONNECTION_TIMEOUT'})
+      }, this.#incomingPeerConnectionTimeout)
 
       console.info('Signalling started...', peerId)
       eventListenersAbortController.signal.addEventListener('abort', () => {
@@ -325,6 +365,12 @@ export class PeerServerClient extends EventTarget {
     }
   }
 
+  #newConnectionMetadata() {
+    return {
+      iceRestarts: 0
+    }
+  }
+
   /**
    * Returns a connection broker compatible with the `negotiationneeded` event on a `RTCPeerConnection`. The broker will emit `success` or `error` events according to how the connection attempt went, check the event `detail` property for relevant information.
    * @param {*} peerId 
@@ -336,36 +382,40 @@ export class PeerServerClient extends EventTarget {
 
     const eventListener = async event => {
       const connection = event.target
+      const connectionMetadata = this.#connectionMetadataWeakMap.get(connection) || this.#newConnectionMetadata()
       const signallingAbort = new AbortController()
-      this.#connection_attachDebuggers(connection)
       let timeoutTimer
-      const dispatchError = (message, code) => {
+      const dispatchError = (message, details) => {
         const error = message instanceof Error ? message : Error(message)
-        error.code = code
+        for (const key of Object.keys(details)) {error[key] = details[key]}
         error.peerId = peerId
         if (remoteMetadata) error.peerMetadata = remoteMetadata
-        clearTimeout(timeoutTimer)
         signallingAbort.abort()
         connection.close()
-        if (this.#throwOnConnectionErrors) throw error
         eventTarget.dispatchEvent(new CustomEvent('error', {detail: error}))
       }
-      // timeoutTimer = setTimeout(() => {
-      //   dispatchError('Connection timed out.', 'PEER_CONNECTION_TIMEOUT')
-      // }, PEER_CONNECTION_TIMEOUT)
-      timeoutTimer = setTimeout(() => {
-        console.warn('restartIce')
-        connection.restartIce()
-      }, 1000)
-      try {
-        await this.#ensureConnection()
-      } catch (error) {
-        return dispatchError(error, 'SIGNALLING_SERVER_CONNECTION')
+      if (await this.#ensureConnection() == false) {
+        return dispatchError('Signalling server is not connected and failed to broker the connection.', {code: 'SIGNALLING_SERVER_CONNECTION'})
       }
+      this.#connection_attachDebuggers(connection)
+      timeoutTimer = setTimeout(() => {
+        if (connectionMetadata.iceRestarts < this.#maxIceRestarts) {
+          connectionMetadata.iceRestarts ++
+          console.warn('restartIce') // It might need 3 restarts, but it does the trick!!
+          signallingAbort.abort() // cleanup listeners here first
+          connection.restartIce() // triggers negotiationneeded (this eventListener)
+        } else {
+          dispatchError('Connection failed after '+(connectionMetadata.iceRestarts+1)+' attempts.', {
+            code: 'PEER_CONNECTION_FAILED', 
+            attempts: connectionMetadata.iceRestarts+1
+          })
+        }
+      }, this.#peerConnectionTimeout)
       console.info('Signalling started...', peerId)
       const connectionId = randomToken()
 
       signallingAbort.signal.addEventListener('abort', () => {
+        clearTimeout(timeoutTimer)
         console.info('Signalling completed!', peerId)
       }, {once: true})
       await connection.setLocalDescription() // auto creates offer
@@ -377,7 +427,8 @@ export class PeerServerClient extends EventTarget {
           sdp: connection.localDescription,
           connectionId, // for this signalling
           // type: 'data', // what kind of connection to open
-          metadata
+          metadata,
+          attempt: connectionMetadata.iceRestarts+1
         }
       }))
 
@@ -416,7 +467,7 @@ export class PeerServerClient extends EventTarget {
         if (fromPeerId != peerId) return // then it's not for us
         if (payload.metadata) remoteMetadata = payload.metadata
         if (payload.rejected) {
-          return dispatchError('Peer rejected the connection.', 'PEER_CONNECTION_REJECTED')
+          return dispatchError('Peer rejected the connection.', {code: 'PEER_CONNECTION_REJECTED'})
         }
         connection.setRemoteDescription(payload.sdp)
       }, {signal: signallingAbort.signal})
@@ -427,7 +478,8 @@ export class PeerServerClient extends EventTarget {
           signallingAbort.abort()
           eventTarget.dispatchEvent(new CustomEvent('success', {detail: {
             peerId,
-            peerMetadata: remoteMetadata
+            peerMetadata: remoteMetadata,
+            connectionMetadata // extra details about the attempt
           }}))
         }
       }, {signal: signallingAbort.signal})

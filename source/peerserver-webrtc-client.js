@@ -112,12 +112,22 @@ export class PeerServerClient extends EventTarget {
         console.warn('connection deleted:', peerId)
         this.#connectionMap.delete(peerId)
       }, {once: true})
-      connection.addEventListener('connectionstatechange', () => {
-        switch (connection.connectionState) {
-          case 'disconnected':
-          case 'failed': connectionAbort.abort()
-        }
-      }, {signal: connectionAbort.signal})
+      // if (connection.connectionState == undefined) { // firefox
+        // see https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceConnectionState
+        connection.addEventListener('iceconnectionstatechange', () => {
+          switch (connection.iceConnectionState) {
+            case 'disconnected': case 'closed': case 'failed':
+              connectionAbort.abort()
+          }
+        }, {signal: connectionAbort.signal})
+      // } else { // any proper browser
+      //   connection.addEventListener('connectionstatechange', () => {
+      //     switch (connection.connectionState) {
+      //       case 'disconnected':
+      //       case 'failed': connectionAbort.abort()
+      //     }
+      //   }, {signal: connectionAbort.signal})
+      // }
       // to more quicly delete a broken connection:
       connection.addEventListener('datachannel', event => {
         const dataChannel = event.channel
@@ -397,8 +407,8 @@ export class PeerServerClient extends EventTarget {
         }
       }, {signal: eventListenersAbortController.signal})
 
-      connection.addEventListener('connectionstatechange', () => {
-        if (connection.connectionState == 'connected') {
+      connection.addEventListener('iceconnectionstatechange', () => {
+        if (connection.iceConnectionState == 'connected') {
           clearTimeout(timeoutTimer)
           eventListenersAbortController.abort()
           if (this.#reuseConnections) this.#connectionAttemptSet.delete(peerId)
@@ -439,15 +449,17 @@ export class PeerServerClient extends EventTarget {
   }
 
   #connection_attachDebuggers(connection, peerId, connectionId) {
-    log(peerId, connectionId, 'connectionState', connection.connectionState)
+    if (connection.connectionState != undefined) {
+      log(peerId, connectionId, 'connectionState', connection.connectionState)
+      connection.addEventListener('connectionstatechange', () => {
+        log(peerId, connectionId, 'connectionState', connection.connectionState)
+      })
+    }
     log(peerId, connectionId, 'signalingState', connection.signalingState)
     log(peerId, connectionId, 'iceConnectionState', connection.iceConnectionState)
     log(peerId, connectionId, 'iceGatheringState', connection.iceGatheringState)
     connection.addEventListener('signalingstatechange', () => {
       log(peerId, connectionId, 'signalingState', connection.signalingState)
-    })
-    connection.addEventListener('connectionstatechange', () => {
-      log(peerId, connectionId, 'connectionState', connection.connectionState)
     })
     connection.onicecandidateerror = event => {
       const {errorCode, errorText, address, port} = event
@@ -534,16 +546,16 @@ export class PeerServerClient extends EventTarget {
             console.warn('connection deleted:', peerId)
             this.#connectionMap.delete(peerId)
           }, {once: true})
-          connection.addEventListener('connectionstatechange', async () => {
-            switch (connection.connectionState) {
+          connection.addEventListener('iceconnectionstatechange', async () => {
+            switch (connection.iceConnectionState) {
               case 'connected':
                 console.warn('connection added:', peerId)
                 this.#connectionMap.set(peerId, connection)
                 this.#connectionAttemptSet.delete(peerId)
                 // console.log([...(await connection.getStats()).entries()])
               break
-              case 'disconnected':
-              case 'failed': connectionAbort.abort()
+              case 'disconnected': case 'closed': case 'failed': 
+                connectionAbort.abort()
             }
           }, {signal: connectionAbort.signal})
         }
@@ -630,8 +642,8 @@ export class PeerServerClient extends EventTarget {
           connection.setRemoteDescription(payload.sdp)
         }, {signal: signallingAbort.signal})
   
-        connection.addEventListener('connectionstatechange', () => {
-          if (connection.connectionState == 'connected') {
+        connection.addEventListener('iceconnectionstatechange', () => {
+          if (connection.iceConnectionState == 'connected') {
             clearTimeout(timeoutTimer)
             signallingAbort.abort()
             eventTarget.dispatchEvent(new CustomEvent('success', {detail: {

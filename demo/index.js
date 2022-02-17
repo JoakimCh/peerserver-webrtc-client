@@ -68,6 +68,13 @@ d.container.append(d.chatLog)
     d.container.append(label, d[row[0]], d[row[1]])
   }
 }
+
+const githubLink = document.createElement('a')
+githubLink.setAttribute('href', 'https://github.com/JoakimCh/peerserver-webrtc-client')
+githubLink.append('Click here to check the GitHub repository.')
+githubLink.style.display = 'block'
+githubLink.style.marginTop = '20px'
+document.body.append(githubLink)
 //#endregion DOM
 
 d.myId.setAttribute('readonly', true)

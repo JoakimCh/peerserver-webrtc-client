@@ -172,7 +172,7 @@ function getValue(element, clear, focus) {
 function onClickOrEnter(func, inputElement, buttonElement) {
   if (buttonElement) buttonElement.addEventListener('click', func)
   if (inputElement) inputElement.addEventListener('keydown', event => {
-    if (event.code == 'Enter') func()
+    if (event.key == 'Enter') func()
   })
 }
 

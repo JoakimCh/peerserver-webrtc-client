@@ -117,6 +117,9 @@ signallingServer.addEventListener('connection', event => {
   d.chatLog.value += msg+'\n'
   log(msg, event.detail)
   monitorConnection(peerId, connection)
+  connection.addEventListener('negotiationneeded', event => {
+    console.warn('negotiationneeded on incoming connection')
+  })
 })
 
 function onDataChannel(peerId, dataChannel) {
@@ -126,7 +129,7 @@ function onDataChannel(peerId, dataChannel) {
     dataChannel.binaryType = 'arraybuffer'
   })
   dataChannel.addEventListener('error', event => {
-    console.warn('peer error:', peerId, event.error)
+    console.warn('peer error:', peerId, event.error, event)
     if (event.error.errorDetail == 'sctp-failure' 
     && event.error.sctpCauseCode == null) {
        return // non-graceful termination is not really an error

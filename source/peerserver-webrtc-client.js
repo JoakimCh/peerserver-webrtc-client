@@ -295,7 +295,7 @@ export class PeerServerClient extends EventTarget {
     const connectionId = payload.connectionId
     let acceptCalled // so we don't double execute it
     let acceptTimeout
-
+    if (this.#reuseConnections) this.#connectionAttemptSet.add(peerId)
     /**
      * Decide whether to accept the incoming connection or reject it.
      * @param {boolean} acceptConnection If we accept it or not.
@@ -306,6 +306,7 @@ export class PeerServerClient extends EventTarget {
       acceptCalled = true
       clearTimeout(acceptTimeout)
       if (!acceptConnection) {
+        if (this.#reuseConnections) this.#connectionAttemptSet.delete(peerId)
         this.#ws.send(JSON.stringify({
           type: 'ANSWER',
           dst: peerId,
@@ -327,6 +328,7 @@ export class PeerServerClient extends EventTarget {
         clearTimeout(timeoutTimer)
         eventListenersAbortController.abort()
         connection.close()
+        if (this.#reuseConnections) this.#connectionAttemptSet.delete(peerId)
         this.dispatchEvent(new CustomEvent('failed connection', {detail: {
           error, peerId, payload
         }}))
@@ -399,6 +401,7 @@ export class PeerServerClient extends EventTarget {
         if (connection.connectionState == 'connected') {
           clearTimeout(timeoutTimer)
           eventListenersAbortController.abort()
+          if (this.#reuseConnections) this.#connectionAttemptSet.delete(peerId)
           this.dispatchEvent(new CustomEvent('connection', {detail: {
             peerId: peerId,
             payload, // includes any metadata

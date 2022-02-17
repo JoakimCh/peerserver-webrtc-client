@@ -112,22 +112,12 @@ export class PeerServerClient extends EventTarget {
         console.warn('connection deleted:', peerId)
         this.#connectionMap.delete(peerId)
       }, {once: true})
-      // if (connection.connectionState == undefined) { // firefox
-        // see https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceConnectionState
-        connection.addEventListener('iceconnectionstatechange', () => {
-          switch (connection.iceConnectionState) {
-            case 'disconnected': case 'closed': case 'failed':
-              connectionAbort.abort()
-          }
-        }, {signal: connectionAbort.signal})
-      // } else { // any proper browser
-      //   connection.addEventListener('connectionstatechange', () => {
-      //     switch (connection.connectionState) {
-      //       case 'disconnected':
-      //       case 'failed': connectionAbort.abort()
-      //     }
-      //   }, {signal: connectionAbort.signal})
-      // }
+      connection.addEventListener('iceconnectionstatechange', () => {
+        switch (connection.iceConnectionState) {
+          case 'disconnected': case 'closed': case 'failed':
+            connectionAbort.abort()
+        }
+      }, {signal: connectionAbort.signal})
       // to more quicly delete a broken connection:
       connection.addEventListener('datachannel', event => {
         const dataChannel = event.channel
@@ -479,9 +469,12 @@ export class PeerServerClient extends EventTarget {
     if (!connectionMetadata) {
       connectionMetadata = {
         connectionId: randomToken(),
-        iceRestarts: 0
+        iceRestarts: 0, // during connection attempt
+        negotiationCount: 1 // first call
       }
       this.#connectionMetadataWeakMap.set(connectionMetadata)
+    } else {
+      connectionMetadata.negotiationCount ++
     }
     return connectionMetadata
   }
@@ -527,6 +520,9 @@ export class PeerServerClient extends EventTarget {
       eventListener = async event => {
         const connection = event.target
         const connectionMetadata = this.#connectionMetadata(connection)
+        if (connectionMetadata.negotiationCount > connectionMetadata.iceRestarts+1) { // I need to learn more about these
+          console.warn('negotiationneeded triggered by browser outside of the initial connection attempt')
+        }
         const connectionId = connectionMetadata.connectionId
         const signallingAbort = new AbortController()
         let timeoutTimer
